@@ -3159,13 +3159,13 @@ namespace IMGUIZMO_NAMESPACE
       const float distance = 3.f;
       matrix_t cubeProjection, cubeView;
       float fov = acosf(distance / (sqrtf(distance * distance + 3.f))) * RAD2DEG;
-      Perspective(fov / sqrtf(2.f), size.x / size.y, 0.01f, 1000.f, cubeProjection.m16);
+      Perspective(fov / sqrtf(2.f), size.x / size.y, 0.01f, 1000.f, cubeProjection.m16, rightHanded);
 
       vec_t dir = makeVect(viewInverse.m[2][0], viewInverse.m[2][1], viewInverse.m[2][2]);
       vec_t up = makeVect(viewInverse.m[1][0], viewInverse.m[1][1], viewInverse.m[1][2]);
       vec_t eye = dir * handednessSign * distance;
       vec_t zero = makeVect(0.f, 0.f);
-      LookAt(&eye.x, &zero.x, &up.x, cubeView.m16);
+      LookAt(&eye.x, &zero.x, &up.x, cubeView.m16, rightHanded);
 
       // set context
       gContext.mViewMat = cubeView;
@@ -3270,15 +3270,15 @@ namespace IMGUIZMO_NAMESPACE
       if (interpolationFrames)
       {
          interpolationFrames--;
-         vec_t newDir = viewInverse.v.dir;
-         newDir.Lerp(interpolationDir, 0.2f);
+         vec_t newDir = viewInverse.v.dir * handednessSign;
+         newDir.Lerp(interpolationDir * handednessSign, 0.2f);
          newDir.Normalize();
 
          vec_t newUp = viewInverse.v.up;
          newUp.Lerp(interpolationUp, 0.3f);
          newUp.Normalize();
          newUp = interpolationUp;
-         vec_t newEye = camTarget + newDir * handednessSign * length;
+         vec_t newEye = camTarget + newDir * length;
          LookAt(&newEye.x, &camTarget.x, &newUp.x, view, rightHanded);
       }
       gContext.mIsViewManipulatorHovered = gContext.mbMouseOver && ImRect(position, position + size).Contains(io.MousePos);
@@ -3311,7 +3311,7 @@ namespace IMGUIZMO_NAMESPACE
                   right.x = 0.f;
                }
                right.Normalize();
-               interpolationUp = Cross(interpolationDir, right);
+               interpolationUp = Cross(interpolationDir * handednessSign, right);
                interpolationUp.Normalize();
             }
             else
@@ -3330,8 +3330,8 @@ namespace IMGUIZMO_NAMESPACE
       {
          matrix_t rx, ry, roll;
 
-         rx.RotationAxis(referenceUp, -io.MouseDelta.x * 0.01f);
-         ry.RotationAxis(viewInverse.v.right, -io.MouseDelta.y * 0.01f);
+         rx.RotationAxis(referenceUp, -io.MouseDelta.x * 0.01f * handednessSign);
+         ry.RotationAxis(viewInverse.v.right, -io.MouseDelta.y * 0.01f * handednessSign);
 
          roll = rx * ry;
 
