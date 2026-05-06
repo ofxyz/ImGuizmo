@@ -47,6 +47,8 @@
 bool useWindow = true;
 int gizmoCount = 1;
 float camDistance = 8.f;
+float camYAngle = 165.f / 180.f * 3.14159f;
+float camXAngle = 32.f / 180.f * 3.14159f;
 static ImGuizmo::OPERATION mCurrentGizmoOperation(ImGuizmo::TRANSLATE);
 static ImGuizmo::MODE mCurrentGizmoMode(ImGuizmo::WORLD);
 static bool useSnap(false);
@@ -132,7 +134,9 @@ void Perspective(float fovyInDegrees, float aspectRatio, float znear, float zfar
       m16[11] = sign;
       m16[12] = 0.0f;
       m16[13] = 0.0f;
-      m16[14] = sign * temp;
+      // Keep the Z translation term negative for both handedness modes.
+      // Using +2n in LH flips clipping orientation and appears like inverted winding.
+      m16[14] = -temp;
       m16[15] = 0.0f;
    }
    else
@@ -247,7 +251,7 @@ inline void rotationY(const float angle, float* m16)
    m16[15] = 1.0f;
 }
 
-void TransformStart(float* cameraView, float* cameraProjection, float* matrix)
+void TransformStart(float* cameraView, float* cameraProjection, float* matrix, bool rightHanded)
 {
     if (ImGui::IsKeyPressed(ImGuiKey_T))
         mCurrentGizmoOperation = ImGuizmo::TRANSLATE;
@@ -332,6 +336,20 @@ void TransformStart(float* cameraView, float* cameraProjection, float* matrix)
     viewManipulateTop = ImGui::GetWindowPos().y;
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     gizmoWindowFlags = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(window->InnerRect.Min, window->InnerRect.Max) ? ImGuiWindowFlags_NoMove : 0;
+
+    // Drag in empty viewport area to orbit the camera
+    ImGuiIO& ioVP = ImGui::GetIO();
+    if (ImGui::IsWindowHovered() && !ImGuizmo::IsOver() && !ImGuizmo::IsUsingViewManipulate() && ioVP.MouseDown[0])
+    {
+       const float handednessSign = rightHanded ? 1.f : -1.f;
+       camYAngle += ioVP.MouseDelta.x * 0.01f * handednessSign;
+       camXAngle += ioVP.MouseDelta.y * 0.01f;
+       camXAngle = ImClamp(camXAngle, -3.14159f * 0.49f, 3.14159f * 0.49f);
+       float eye[] = { cosf(camYAngle) * cosf(camXAngle) * camDistance, sinf(camXAngle) * camDistance, sinf(camYAngle) * cosf(camXAngle) * camDistance };
+       float at[] = { 0.f, 0.f, 0.f };
+       float up[] = { 0.f, 1.f, 0.f };
+       LookAt(eye, at, up, cameraView, rightHanded);
+    }
 
     ImGuizmo::DrawGrid(cameraView, cameraProjection, identityMatrix, 100.f);
     ImGuizmo::DrawCubes(cameraView, cameraProjection, &objectMatrix[0][0], gizmoCount);
@@ -1059,8 +1077,6 @@ int main(int, char**)
    bool isPerspective = true;
    float fov = 27.f;
    float viewWidth = 10.f; // for orthographic
-   float camYAngle = 165.f / 180.f * 3.14159f;
-   float camXAngle = 32.f / 180.f * 3.14159f;
    bool infiniteFarPlane = false;
    int handedness = 0; // 0 = right-handed, 1 = left-handed
 
@@ -1092,7 +1108,7 @@ int main(int, char**)
 
       // create a window and insert the inspector
       ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Appearing);
-      ImGui::SetNextWindowSize(ImVec2(320, 340), ImGuiCond_Appearing);
+      ImGui::SetNextWindowSize(ImVec2(320, 500), ImGuiCond_Appearing);
       ImGui::Begin("Editor");
       if (ImGui::RadioButton("Full view", !useWindow)) useWindow = false;
       ImGui::SameLine();
@@ -1112,9 +1128,18 @@ int main(int, char**)
          ImGui::SliderFloat("Ortho width", &viewWidth, 1, 20);
       }
       viewDirty |= ImGui::SliderFloat("Distance", &camDistance, 1.f, 10.f);
+      if (ImGui::IsItemHovered() && io.MouseWheel != 0.f)
+      {
+         camDistance = ImClamp(camDistance - io.MouseWheel * 0.5f, 1.f, 10.f);
+         viewDirty = true;
+      }
       viewDirty |= ImGui::Combo("Handedness", &handedness, "Right-handed\0Left-handed\0");
+      // Recompute rightHanded immediately after combo so the LookAt below uses the new value
+      rightHanded = (handedness == 0);
       if (isPerspective)
-         ImGui::Checkbox("Infinite far plane", &infiniteFarPlane);
+      {
+         viewDirty |= ImGui::Checkbox("Infinite far plane", &infiniteFarPlane);
+      }
       ImGui::SliderInt("Gizmo count", &gizmoCount, 1, 4);
 
       if (viewDirty || firstFrame)
@@ -1125,6 +1150,10 @@ int main(int, char**)
          LookAt(eye, at, up, cameraView, rightHanded);
          firstFrame = false;
       }
+      // Also refresh next frame so projection catches up when handedness changed
+      static int prevHandedness = handedness;
+      if (prevHandedness != handedness) { firstFrame = true; }
+      prevHandedness = handedness;
 
       ImGui::Text("X: %f Y: %f", io.MousePos.x, io.MousePos.y);
       if (ImGuizmo::IsUsing())
@@ -1143,7 +1172,7 @@ int main(int, char**)
       }
       ImGui::Separator();
       
-      TransformStart(cameraView, cameraProjection, objectMatrix[lastUsing]);
+      TransformStart(cameraView, cameraProjection, objectMatrix[lastUsing], rightHanded);
       for (int matId = 0; matId < gizmoCount; matId++)
       {
           ImGuizmo::PushID(matId);
@@ -1159,7 +1188,7 @@ int main(int, char**)
 
       ImGui::End();
 
-      ImGui::SetNextWindowPos(ImVec2(10, 350), ImGuiCond_Appearing);
+      ImGui::SetNextWindowPos(ImVec2(10, 500), ImGuiCond_Appearing);
 
       ImGui::SetNextWindowSize(ImVec2(940, 480), ImGuiCond_Appearing);
       ImGui::Begin("Other controls");
