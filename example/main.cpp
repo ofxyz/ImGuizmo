@@ -3,7 +3,7 @@
 //
 // The MIT License(MIT)
 //
-// Copyright(c) 2016-2021 Cedric Guillemet
+// Copyright(c) 2016-2026 Cedric Guillemet and contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files(the "Software"), to deal
@@ -51,6 +51,9 @@ static ImGuizmo::OPERATION mCurrentGizmoOperation(ImGuizmo::TRANSLATE);
 static ImGuizmo::MODE mCurrentGizmoMode(ImGuizmo::WORLD);
 static bool useSnap(false);
 static float snap[3] = { 1.f, 1.f, 1.f };
+static float bounds[] = { -0.5f, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f };
+static float boundsSnap[] = { 0.1f, 0.1f, 0.1f };
+static bool boundSizingSnap = false;
 
 float objectMatrix[4][16] = {
   { 1.f, 0.f, 0.f, 0.f,
@@ -212,25 +215,27 @@ inline void rotationY(const float angle, float* m16)
 
 void TransformStart(float* cameraView, float* cameraProjection, float* matrix)
 {
-    static float bounds[] = { -0.5f, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f };
-    static float boundsSnap[] = { 0.1f, 0.1f, 0.1f };
-    static bool boundSizing = false;
-    static bool boundSizingSnap = false;
-
     if (ImGui::IsKeyPressed(ImGuiKey_T))
         mCurrentGizmoOperation = ImGuizmo::TRANSLATE;
     if (ImGui::IsKeyPressed(ImGuiKey_E))
         mCurrentGizmoOperation = ImGuizmo::ROTATE;
     if (ImGui::IsKeyPressed(ImGuiKey_R)) // r Key
         mCurrentGizmoOperation = ImGuizmo::SCALE;
-    if (ImGui::RadioButton("Translate", mCurrentGizmoOperation == ImGuizmo::TRANSLATE))
-        mCurrentGizmoOperation = ImGuizmo::TRANSLATE;
+    bool translateActive = (mCurrentGizmoOperation & ImGuizmo::TRANSLATE) != 0;
+    bool rotateActive   = (mCurrentGizmoOperation & ImGuizmo::ROTATE) != 0;
+    bool scaleActive    = (mCurrentGizmoOperation & ImGuizmo::SCALE) != 0;
+    bool boundsActive   = (mCurrentGizmoOperation & ImGuizmo::BOUNDS) != 0;
+    if (ImGui::Checkbox("Translate", &translateActive))
+        mCurrentGizmoOperation = (ImGuizmo::OPERATION)((int)mCurrentGizmoOperation ^ (int)ImGuizmo::TRANSLATE);
     ImGui::SameLine();
-    if (ImGui::RadioButton("Rotate", mCurrentGizmoOperation == ImGuizmo::ROTATE))
-        mCurrentGizmoOperation = ImGuizmo::ROTATE;
+    if (ImGui::Checkbox("Rotate", &rotateActive))
+        mCurrentGizmoOperation = (ImGuizmo::OPERATION)((int)mCurrentGizmoOperation ^ (int)ImGuizmo::ROTATE);
     ImGui::SameLine();
-    if (ImGui::RadioButton("Scale", mCurrentGizmoOperation == ImGuizmo::SCALE))
-        mCurrentGizmoOperation = ImGuizmo::SCALE;
+    if (ImGui::Checkbox("Scale", &scaleActive))
+        mCurrentGizmoOperation = (ImGuizmo::OPERATION)((int)mCurrentGizmoOperation ^ (int)ImGuizmo::SCALE);
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Bounds", &boundsActive))
+        mCurrentGizmoOperation = (ImGuizmo::OPERATION)((int)mCurrentGizmoOperation ^ (int)ImGuizmo::BOUNDS);
     float matrixTranslation[3], matrixRotation[3], matrixScale[3];
     ImGuizmo::DecomposeMatrixToComponents(matrix, matrixTranslation, matrixRotation, matrixScale);
     ImGui::InputFloat3("Tr", matrixTranslation);
@@ -238,7 +243,7 @@ void TransformStart(float* cameraView, float* cameraProjection, float* matrix)
     ImGui::InputFloat3("Sc", matrixScale);
     ImGuizmo::RecomposeMatrixFromComponents(matrixTranslation, matrixRotation, matrixScale, matrix);
 
-    if (mCurrentGizmoOperation != ImGuizmo::SCALE)
+    if (mCurrentGizmoOperation & (ImGuizmo::TRANSLATE | ImGuizmo::ROTATE | ImGuizmo::SCALE))
     {
         if (ImGui::RadioButton("Local", mCurrentGizmoMode == ImGuizmo::LOCAL))
             mCurrentGizmoMode = ImGuizmo::LOCAL;
@@ -249,19 +254,21 @@ void TransformStart(float* cameraView, float* cameraProjection, float* matrix)
 
     if (ImGui::IsKeyPressed(ImGuiKey_S))
         useSnap = !useSnap;
-    ImGui::Checkbox("##useSnap", &useSnap);
+    ImGui::Checkbox("Use Snap", &useSnap);
     ImGui::SameLine();
-    switch (mCurrentGizmoOperation)
-    {
-    case ImGuizmo::TRANSLATE:
+    if (mCurrentGizmoOperation & ImGuizmo::TRANSLATE)
         ImGui::InputFloat3("Snap", &snap[0]);
-        break;
-    case ImGuizmo::ROTATE:
+    if (mCurrentGizmoOperation & ImGuizmo::ROTATE)
         ImGui::InputFloat("Angle Snap", &snap[0]);
-        break;
-    case ImGuizmo::SCALE:
+    if (mCurrentGizmoOperation & ImGuizmo::SCALE)
         ImGui::InputFloat("Scale Snap", &snap[0]);
-        break;
+    if (mCurrentGizmoOperation & ImGuizmo::BOUNDS)
+    {
+        ImGui::InputFloat3("Bounds Min", &bounds[0]);
+        ImGui::InputFloat3("Bounds Max", &bounds[3]);
+        ImGui::Checkbox("Snap Bounds", &boundSizingSnap);
+        if (boundSizingSnap)
+            ImGui::InputFloat3("Bounds Snap", &boundsSnap[0]);
     }
 
     ImGuiIO& io = ImGui::GetIO();
@@ -320,7 +327,8 @@ void EditTransform(float* cameraView, float* cameraProjection, float* matrix)
     {
        ImGuizmo::SetRect(ImGui::GetWindowPos().x, ImGui::GetWindowPos().y, windowWidth, windowHeight);
     }
-    ImGuizmo::Manipulate(cameraView, cameraProjection, mCurrentGizmoOperation, mCurrentGizmoMode, matrix, NULL, useSnap ? &snap[0] : NULL);
+    const bool hasBounds = (mCurrentGizmoOperation & ImGuizmo::BOUNDS) != 0;
+    ImGuizmo::Manipulate(cameraView, cameraProjection, mCurrentGizmoOperation, mCurrentGizmoMode, matrix, NULL, useSnap ? &snap[0] : NULL, hasBounds ? bounds : NULL, hasBounds && boundSizingSnap ? boundsSnap : NULL);
 }
 
 //
